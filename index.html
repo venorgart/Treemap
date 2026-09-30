@@ -35,15 +35,19 @@
     .meta { display:flex; flex-wrap:wrap; gap:8px 16px; padding:0 18px 15px; color:var(--muted); font-size:13px; }
     .meta span { padding:5px 9px; border-radius:7px; background:#f0f6f3; }
     .chart-panel { overflow:hidden; }
+    .fullscreen-overlay { display:none; position:absolute; z-index:20; top:16px; right:16px; gap:8px; }
+    .fullscreen-overlay button { width:auto; box-shadow:0 4px 14px rgba(32,82,63,.16); }
+    .chart-toolbar { margin-bottom:16px; }
     .chart-top { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:18px 18px 0; }
     .chart-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
     .chart-top button { width:auto; }
-    .fullscreen-action, .exit-fullscreen-action { display:none; }
-    .chart-panel:fullscreen { width:100vw; height:100vh; border:0; border-radius:0; background:#fff; }
-    .chart-panel:fullscreen #chart { height:calc(100vh - 92px); }
-    .chart-panel:fullscreen .fullscreen-action, .chart-panel:fullscreen .exit-fullscreen-action { display:block; }
-    .chart-panel:fullscreen .enter-fullscreen-action { display:none; }
-    #chart { height:clamp(520px,68vh,780px); width:100%; padding:12px 18px 18px; }
+    .fullscreen-action { display:block; }
+    .exit-fullscreen-action { display:none; }
+    .chart-panel:fullscreen { position:relative; width:100vw; height:100vh; border:0; border-radius:0; background:#fff; }
+    .chart-panel:fullscreen .fullscreen-overlay { display:flex; }
+    .chart-panel:fullscreen #chart { height:calc(100vh + 30px); }
+    #chart { height:calc(clamp(520px,68vh,780px) + 30px); width:calc(100% + 30px); margin:0 -30px -30px 0; padding:12px 18px 18px; overflow:hidden; cursor:grab; }
+    #chart:active { cursor:grabbing; }
     .empty { display:grid; place-items:center; height:100%; min-height:520px; color:var(--muted); text-align:center; padding:40px; }
     .empty strong { display:block; color:var(--ink); font-size:20px; margin-bottom:7px; }
     .help { margin-top:16px; padding:18px; }
@@ -68,15 +72,18 @@
 
     <div id="status" class="status">Выберите файл, чтобы начать.</div>
     <section id="warnings" class="panel warnings" aria-live="polite"></section>
-    <section class="panel chart-panel">
+    <section class="panel chart-toolbar">
       <div class="chart-top"><div><h2>Визуализация</h2><div id="breadcrumb" class="meta"><span>Данные ещё не загружены</span></div></div><div class="chart-actions"><button id="backButton" class="secondary" disabled>Общий вид</button><button id="fullscreenButton" class="secondary enter-fullscreen-action">⛶ Полный экран</button><button id="fullscreenExportButton" class="secondary fullscreen-action">Сохранить PNG</button><button id="exitFullscreenButton" class="secondary exit-fullscreen-action">Выйти из полного экрана</button></div></div>
+    </section>
+    <section class="panel chart-panel">
+      <div class="fullscreen-overlay" aria-label="Управление полноэкранным режимом"><button id="overlayExportButton" class="secondary">Сохранить PNG</button><button id="overlayExitFullscreenButton" class="secondary" aria-label="Выйти из полноэкранного режима">✕ Выйти</button></div>
       <div id="chart"><div class="empty"><div><strong>Здесь появится treemap</strong>Выберите исходный файл в верхней части страницы.</div></div></div>
     </section>
     <section class="panel help"><h2>Правила входного файла</h2><ul><li>Первая строка должна содержать заголовки.</li><li>Первый столбец — группы верхнего уровня.</li><li>Все столбцы между первым и последним — уровни вложенности.</li><li>Последний столбец — числовой показатель. Пустые значения считаются нулём и отмечаются в предупреждениях.</li><li>Отрицательные значения занимают площадь по модулю и окрашиваются красным.</li><li>Для Excel используется первый лист, либо лист, выбранный в поле выше.</li></ul></section>
   </main>
 
   <script>
-    const state = { workbook: null, rows: null, chart: null, root: null, currentPath: [], warnings: [], headers: [], zoom:1, zoomOriginX:50, zoomOriginY:50, pathById:{} };
+    const state = { workbook: null, rows: null, chart: null, root: null, currentPath: [], warnings: [], headers: [], zoom:1, zoomOriginX:50, zoomOriginY:50, panX:0, panY:0, pathById:{}, suppressClick:false };
     const fileInput = document.getElementById('fileInput');
     const sheetSelect = document.getElementById('sheetSelect');
     const loadButton = document.getElementById('loadButton');
@@ -85,6 +92,8 @@
     const fullscreenButton = document.getElementById('fullscreenButton');
     const fullscreenExportButton = document.getElementById('fullscreenExportButton');
     const exitFullscreenButton = document.getElementById('exitFullscreenButton');
+    const overlayExportButton = document.getElementById('overlayExportButton');
+    const overlayExitFullscreenButton = document.getElementById('overlayExitFullscreenButton');
     const statusBox = document.getElementById('status');
     const warningsBox = document.getElementById('warnings');
     const breadcrumb = document.getElementById('breadcrumb');
@@ -131,12 +140,18 @@
     };
     exportButton.addEventListener('click', savePng);
     fullscreenExportButton.addEventListener('click', savePng);
+    overlayExportButton.addEventListener('click', savePng);
     fullscreenButton.addEventListener('click', async () => {
       try { await document.querySelector('.chart-panel').requestFullscreen(); }
       catch (error) { setError('Не удалось открыть полноэкранный режим. Проверьте разрешения браузера.'); }
     });
     exitFullscreenButton.addEventListener('click', () => { if (document.fullscreenElement) document.exitFullscreen(); });
+    overlayExitFullscreenButton.addEventListener('click', () => { if (document.fullscreenElement) document.exitFullscreen(); });
     document.addEventListener('fullscreenchange', () => {
+      const isFullscreen = Boolean(document.fullscreenElement);
+      fullscreenButton.style.display = isFullscreen ? 'none' : '';
+      fullscreenExportButton.style.display = 'block';
+      exitFullscreenButton.style.display = isFullscreen ? 'block' : 'none';
       if (state.chart) requestAnimationFrame(() => { renderCurrent(); Plotly.Plots.resize(chartBox); });
     });
     window.addEventListener('resize', () => state.chart && Plotly.Plots.resize(chartBox));
@@ -281,7 +296,7 @@
       let current = state.root; state.currentPath.forEach(label => { current = current.children.find(child => child.name === label) || current; });
       const minimumValue = Math.max(getMaximumLeafValue(current) * 0.004, 0.001); assignLayoutValues(current, minimumValue);
       const nodes = flattenForPlotly(current); state.pathById = Object.fromEntries(nodes.ids.map((id, index) => [id, nodes.paths[index]]));
-      const trace = { type:'treemap', ids:nodes.ids, labels:nodes.labels, parents:nodes.parents, values:nodes.values, text:nodes.labels.map((label, index) => `${wrapLabel(label)}<br>${formatNumber(nodes.signed[index])}`), customdata:nodes.paths.map(path => JSON.stringify(path)), branchvalues:'total', root:{ color:'rgba(255,255,255,0)' }, marker:{ colors:nodes.colors, line:{ color:'#ffffff', width:2 } }, textinfo:'text', textposition:'middle center', texttemplate:'%{text}', hovertemplate:'<b>%{label}</b><br>Значение: %{value:,.3f}<extra></extra>', hoverlabel:{ namelength:-1, align:'left', font:{ size:12 } }, pathbar:{ visible:false }, tiling:{ packing:'squarify', pad:2, squarifyratio:1 }, maxdepth:-1 };
+      const trace = { type:'treemap', ids:nodes.ids, labels:nodes.labels, parents:nodes.parents, values:nodes.values, text:nodes.labels.map((label, index) => label ? `${wrapLabel(label)}<br>${formatNumber(nodes.signed[index])}` : ''), customdata:nodes.paths.map(path => JSON.stringify(path)), branchvalues:'total', root:{ color:'rgba(255,255,255,0)' }, marker:{ colors:nodes.colors, line:{ color:'#ffffff', width:2 } }, textinfo:'text', textposition:'middle center', texttemplate:'%{text}', hovertemplate:'<b>%{label}</b><br>Значение: %{value:,.3f}<extra></extra>', hoverlabel:{ namelength:-1, align:'left', font:{ size:12 } }, pathbar:{ visible:false }, tiling:{ packing:'squarify', pad:2, squarifyratio:1 }, maxdepth:-1 };
       const layout = { margin:{ t:10, l:10, r:10, b:10 }, paper_bgcolor:'#ffffff', plot_bgcolor:'#ffffff', uniformtext:{ minsize:10, mode:'hide' }, font:{ family:'Inter, Segoe UI, Arial, sans-serif', color:'#111111' }, hoverlabel:{ namelength:-1, align:'left', bgcolor:'#ffffff', bordercolor:'#26332e', font:{ color:'#111111', size:12 } } };
       let draw;
       try { draw = chartBox.classList.contains('js-plotly-plot') ? Plotly.react(chartBox, [trace], layout, { responsive:true, displayModeBar:false, displaylogo:false }) : Plotly.newPlot(chartBox, [trace], layout, { responsive:true, displayModeBar:false, displaylogo:false }); }
@@ -291,6 +306,7 @@
         if (chartBox.dataset.handlersBound === 'true') return;
         chartBox.dataset.handlersBound = 'true';
         chartBox.on('plotly_click', event => {
+          if (state.suppressClick) { state.suppressClick = false; return; }
           const point = event.points?.[0]; let path = point?.customdata || state.pathById[point?.id];
           if (typeof path === 'string') { try { path = JSON.parse(path); } catch { path = null; } }
           if (Array.isArray(path) && path.length) { state.currentPath = [...path]; renderCurrent(); }
@@ -302,18 +318,44 @@
           state.zoomOriginY = ((event.clientY - rect.top) / rect.height) * 100;
           setZoom(state.zoom * (event.deltaY < 0 ? 1.1 : 0.9));
         }, { passive:false, capture:true });
+        let drag = null;
+        chartBox.addEventListener('pointerdown', event => {
+          if (event.button !== 0) return;
+          state.suppressClick = false;
+          drag = { id:event.pointerId, x:event.clientX, y:event.clientY, panX:state.panX, panY:state.panY, moved:false };
+        });
+        chartBox.addEventListener('pointermove', event => {
+          if (!drag || drag.id !== event.pointerId) return;
+          const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+          if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+          drag.moved = true; state.suppressClick = true;
+          state.panX = drag.panX + dx; state.panY = drag.panY + dy;
+          event.preventDefault(); applyZoom();
+        }, { passive:false });
+        const finishDrag = event => {
+          if (!drag || drag.id !== event.pointerId) return;
+          drag = null;
+        };
+        chartBox.addEventListener('pointerup', finishDrag);
+        chartBox.addEventListener('pointercancel', finishDrag);
+        chartBox.addEventListener('click', event => {
+          if (!state.suppressClick) return;
+          event.preventDefault();
+          event.stopPropagation();
+          state.suppressClick = false;
+        }, true);
       }).catch(error => setError('Не удалось построить treemap: ' + (error?.message || error)));
-      backButton.disabled = state.currentPath.length === 0; breadcrumb.innerHTML = [state.root.name, ...state.currentPath].map((value, i) => `<span>${escapeHtml(value)}</span>${i < state.currentPath.length ? '<b>›</b>' : ''}`).join('');
-      state.zoom = 1; requestAnimationFrame(applyZoom);
+      backButton.disabled = state.currentPath.length === 0; breadcrumb.innerHTML = state.currentPath.map((value, i) => `<span>${escapeHtml(value)}</span>${i < state.currentPath.length - 1 ? '<b>›</b>' : ''}`).join('');
+      state.zoom = 1; state.panX = 0; state.panY = 0; requestAnimationFrame(applyZoom);
     }
     function flattenForPlotly(root) {
       const nodes = { ids:[], labels:[], parents:[], values:[], signed:[], colors:[], paths:[] }, rootId = '__plotly_root__';
-      nodes.ids.push(rootId); nodes.labels.push(''); nodes.parents.push(''); nodes.values.push(root.layoutValue); nodes.signed.push(root.signed); nodes.colors.push('rgba(255,255,255,0)'); nodes.paths.push([]);
+      nodes.ids.push(rootId); nodes.labels.push(root.path.length ? root.name : ''); nodes.parents.push(''); nodes.values.push(root.layoutValue); nodes.signed.push(root.signed); nodes.colors.push(root.path.length ? (root.color || '#dbe7e2') : 'rgba(255,255,255,0)'); nodes.paths.push([]);
       function visit(item, parentId) { const id = item.path.length ? item.path.join('\u001F') : 'root'; nodes.ids.push(id); nodes.labels.push(String(item.name ?? 'Без значения')); nodes.parents.push(parentId); nodes.values.push(item.layoutValue); nodes.signed.push(item.signed); nodes.colors.push(item.color || '#dbe7e2'); nodes.paths.push(item.path); item.children.forEach(child => visit(child, id)); }
       if (root.children.length) root.children.forEach(child => visit(child, rootId)); else visit(root, rootId); return nodes;
     }
     function setZoom(value) {
-      state.zoom = Math.max(0.7, Math.min(2.5, value));
+      state.zoom = Math.max(0.05, value);
       applyZoom();
       if (state.chart && chartBox.classList.contains('js-plotly-plot')) {
         const minimumTextSize = Math.max(4, Math.round(10 / state.zoom));
@@ -323,7 +365,7 @@
     function applyZoom() {
       chartBox.style.zoom = '';
       chartBox.style.transformOrigin = `${state.zoomOriginX}% ${state.zoomOriginY}%`;
-      chartBox.style.transform = `scale(${state.zoom})`;
+      chartBox.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
     }
     function getMaximumLeafValue(item) { return item.children.length ? Math.max(...item.children.map(getMaximumLeafValue), 0) : item.value; }
     function assignLayoutValues(item, minimumValue) {
@@ -360,7 +402,7 @@
       return lines.join('<br>');
     }
     function renderWarnings() { warningsBox.innerHTML = state.warnings.length ? `<h2>Проверка данных</h2><ul>${state.warnings.map(value => `<li>${escapeHtml(value)}</li>`).join('')}</ul>` : ''; }
-    function resetView() { state.root = null; state.currentPath = []; state.zoom = 1; state.zoomOriginX = 50; state.zoomOriginY = 50; state.pathById = {}; state.warnings = []; warningsBox.innerHTML = ''; exportButton.disabled = true; backButton.disabled = true; chartBox.style.zoom = ''; chartBox.style.transform = ''; chartBox.style.transformOrigin = ''; delete chartBox.dataset.handlersBound; if (state.chart) { Plotly.purge(chartBox); state.chart = null; } chartBox.innerHTML = '<div class="empty"><div><strong>Здесь появится treemap</strong>Выберите исходный файл в верхней части страницы.</div></div>'; }
+    function resetView() { state.root = null; state.currentPath = []; state.zoom = 1; state.zoomOriginX = 50; state.zoomOriginY = 50; state.panX = 0; state.panY = 0; state.suppressClick = false; state.pathById = {}; state.warnings = []; warningsBox.innerHTML = ''; exportButton.disabled = true; backButton.disabled = true; chartBox.style.zoom = ''; chartBox.style.transform = ''; chartBox.style.transformOrigin = ''; delete chartBox.dataset.handlersBound; if (state.chart) { Plotly.purge(chartBox); state.chart = null; } chartBox.innerHTML = '<div class="empty"><div><strong>Здесь появится treemap</strong>Выберите исходный файл в верхней части страницы.</div></div>'; }
     function setStatus(message) { statusBox.className = 'status'; statusBox.innerHTML = message; }
     function setError(message) { statusBox.className = 'status error'; statusBox.textContent = message; }
     function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;' }[char])); }
